@@ -2,7 +2,6 @@
 import React, { useEffect, useState, ChangeEvent, FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AxiosError, AxiosResponse } from "axios";
-import imageCompression from "browser-image-compression";
 import Image from "next/image";
 import Header from "./Header";
 import companyLogo from "../../../public/logo.png";
@@ -86,9 +85,195 @@ interface ApiResponse {
   applicant_id?: string;
 }
 
+interface CompressionOptions {
+  maxWidth?: number;
+  maxHeight?: number;
+  quality?: number;
+  maxFileSize?: number;
+}
+
+// Mobile-optimized File Compressor
+class MobileFileCompressor {
+  static async compressImage(
+    file: File,
+    options: CompressionOptions = {}
+  ): Promise<File> {
+    const {
+      maxWidth = 800, // Lower for mobile
+      maxHeight = 800,
+      quality = 0.6, // Lower quality for mobile
+      maxFileSize = 1 * 1024 * 1024, // 1MB for mobile
+    } = options;
+
+    return new Promise((resolve, reject) => {
+      // Skip compression for small files on mobile
+      if (file.size <= maxFileSize) {
+        resolve(this.sanitizeFileName(file));
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        // Fix: Create Image with proper constructor and type assertion
+        const img = document.createElement("img");
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          let { width, height } = img;
+
+          // Calculate mobile-optimized dimensions
+          if (width > maxWidth) {
+            height = (height * maxWidth) / width;
+            width = maxWidth;
+          }
+          if (height > maxHeight) {
+            width = (width * maxHeight) / height;
+            height = maxHeight;
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            reject(new Error("Canvas not supported"));
+            return;
+          }
+
+          // Mobile-optimized compression
+          ctx.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob(
+            (blob) => {
+              if (!blob) {
+                reject(new Error("Compression failed"));
+                return;
+              }
+
+              const compressedFile = new File(
+                [blob],
+                this.sanitizeFileName(file).name,
+                {
+                  type: "image/jpeg",
+                  lastModified: Date.now(),
+                }
+              );
+
+              resolve(compressedFile);
+            },
+            "image/jpeg",
+            quality
+          );
+        };
+        img.onerror = () => reject(new Error("Image loading failed"));
+        if (e.target?.result) {
+          img.src = e.target.result as string;
+        } else {
+          reject(new Error("File reading failed"));
+        }
+      };
+      reader.onerror = () => reject(new Error("File reading failed"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  static async compressDocument(file: File): Promise<File> {
+    const maxSize = 3 * 1024 * 1024; // 3MB for mobile
+    if (file.size > maxSize) {
+      throw new Error(`File too large. Maximum size is 3MB.`);
+    }
+    return this.sanitizeFileName(file);
+  }
+
+  static sanitizeFileName(file: File): File {
+    const sanitizedName = file.name
+      .replace(/[^a-zA-Z0-9.\-_]/g, "_")
+      .replace(/_+/g, "_")
+      .substring(0, 50); // Shorter for mobile
+
+    // Preserve file extension
+    const lastDotIndex = sanitizedName.lastIndexOf(".");
+    if (lastDotIndex > 0) {
+      const name = sanitizedName.substring(0, lastDotIndex);
+      const ext = sanitizedName.substring(lastDotIndex);
+      const finalName = name.substring(0, 50 - ext.length) + ext;
+      return new File([file], finalName, { type: file.type });
+    }
+
+    return new File([file], sanitizedName, { type: file.type });
+  }
+
+  static async compressFile(
+    file: File,
+    options: CompressionOptions = {}
+  ): Promise<File> {
+    try {
+      const sanitizedFile = this.sanitizeFileName(file);
+
+      if (file.type.startsWith("image/")) {
+        return await this.compressImage(sanitizedFile, options);
+      } else if (file.type === "application/pdf") {
+        return await this.compressDocument(sanitizedFile);
+      } else if (
+        file.type === "application/msword" ||
+        file.type ===
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      ) {
+        return await this.compressDocument(sanitizedFile);
+      }
+
+      return sanitizedFile;
+    } catch (error) {
+      console.warn("Compression failed, using original file:", error);
+      return this.sanitizeFileName(file);
+    }
+  }
+}
+
+// Mobile-optimized API client
+class MobileApiClient {
+  static async submitApplication(
+    url: string,
+    formData: FormData,
+    onProgress?: (progress: number) => void
+  ): Promise<AxiosResponse> {
+    const submitData = new FormData();
+
+    // Add all form fields
+    for (const key in formData) {
+      const value = formData[key as keyof FormData];
+      if (value instanceof File) {
+        submitData.append(key, value);
+      } else if (value !== null && value !== "") {
+        submitData.append(key, value as string);
+      }
+    }
+
+    const axios = (await import("axios")).default;
+
+    return axios.post(url, submitData, {
+      baseURL:
+        process.env.NEXT_PUBLIC_API_BASE_URL ||
+        "https://backend.dreamabroad.online/api/v2/",
+      timeout: 45000, // 45 seconds for mobile
+      maxContentLength: 100 * 1024 * 1024,
+      maxBodyLength: 100 * 1024 * 1024,
+      headers: {
+        "Content-Type": "multipart/form-data",
+        Accept: "application/json",
+      },
+      onUploadProgress: (progressEvent) => {
+        if (progressEvent.total && onProgress) {
+          const progress = (progressEvent.loaded / progressEvent.total) * 100;
+          onProgress(Math.round(progress));
+        }
+      },
+    });
+  }
+}
+
 const extractDataFromResponse = (response: unknown): CampaignData | null => {
   if (response && typeof response === "object" && "data" in response) {
-    return response.data as CampaignData;
+    return (response as { data: CampaignData }).data;
   }
   if (response && typeof response === "object") {
     return response as CampaignData;
@@ -105,6 +290,9 @@ function OpportunityDetailPage() {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitSuccess, setSubmitSuccess] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string>("");
+  const [compressing, setCompressing] = useState<boolean>(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
+  const [isMobile, setIsMobile] = useState<boolean>(false);
 
   const [formData, setFormData] = useState<FormData>({
     full_name: "",
@@ -134,6 +322,23 @@ function OpportunityDetailPage() {
   const searchParams = useSearchParams();
   const campaignId = searchParams.get("campaign_id");
   const router = useRouter();
+
+  // Detect mobile device
+  useEffect(() => {
+    const checkMobile = () => {
+      if (typeof window !== "undefined") {
+        const mobile =
+          /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+            navigator.userAgent
+          ) || window.innerWidth < 768;
+        setIsMobile(mobile);
+      }
+    };
+
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -247,14 +452,41 @@ function OpportunityDetailPage() {
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handleFileUpload = (
+  const handleFileUpload = async (
     e: ChangeEvent<HTMLInputElement>,
     fieldName: keyof FormData
   ) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       if (file) {
-        setFormData((prev) => ({ ...prev, [fieldName]: file }));
+        try {
+          setCompressing(true);
+
+          // Mobile-optimized compression
+          const compressedFile = await MobileFileCompressor.compressFile(file, {
+            maxWidth: isMobile ? 800 : 1200,
+            maxHeight: isMobile ? 800 : 1200,
+            quality: isMobile ? 0.6 : 0.7,
+            maxFileSize: isMobile ? 1 * 1024 * 1024 : 2 * 1024 * 1024,
+          });
+
+          setFormData((prev) => ({ ...prev, [fieldName]: compressedFile }));
+
+          if (isMobile && compressedFile.size < file.size) {
+            console.log(
+              `Mobile compression: ${file.name} reduced by ${(
+                (1 - compressedFile.size / file.size) *
+                100
+              ).toFixed(1)}%`
+            );
+          }
+        } catch (error) {
+          console.error(`Error compressing ${fieldName}:`, error);
+          // Always fall back to original file
+          setFormData((prev) => ({ ...prev, [fieldName]: file }));
+        } finally {
+          setCompressing(false);
+        }
       }
     }
   };
@@ -280,78 +512,72 @@ function OpportunityDetailPage() {
       }
     }
 
+    // Mobile-optimized file validation
     const resumeFile = formData.resume;
-    if (
-      resumeFile &&
-      ![
+    if (resumeFile) {
+      const validTypes = [
         "application/pdf",
         "application/msword",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      ].includes(resumeFile.type)
-    ) {
-      setSubmitError("Resume must be a PDF or Word document");
-      return false;
+      ];
+
+      if (!validTypes.includes(resumeFile.type)) {
+        setSubmitError("Resume must be a PDF or Word document");
+        return false;
+      }
+
+      const maxSize = isMobile ? 3 * 1024 * 1024 : 5 * 1024 * 1024;
+      if (resumeFile.size > maxSize) {
+        setSubmitError(`Resume must be less than ${isMobile ? "3MB" : "5MB"}`);
+        return false;
+      }
     }
 
     return true;
   };
 
-  const truncateFilename = (file: File, maxLength: number = 90): File => {
-    if (file.name.length <= maxLength) {
-      return file;
+  const compressAllFiles = async (): Promise<FormData> => {
+    const compressedFormData = { ...formData };
+    const fileFields: (keyof FormData)[] = [
+      "resume",
+      "certification",
+      "cover_letter",
+      "card_image_front",
+      "card_image_back",
+      "profile_photo",
+    ];
+
+    for (const field of fileFields) {
+      const file = compressedFormData[field];
+      if (file instanceof File) {
+        try {
+          const compressedFile = await MobileFileCompressor.compressFile(file, {
+            maxWidth: isMobile ? 800 : 1200,
+            maxHeight: isMobile ? 800 : 1200,
+            quality: isMobile ? 0.6 : 0.7,
+            maxFileSize: isMobile ? 1 * 1024 * 1024 : 2 * 1024 * 1024,
+          });
+          // Fix: Use type assertion to handle File assignment
+          (
+            compressedFormData as Record<
+              keyof FormData,
+              FormData[keyof FormData]
+            >
+          )[field] = compressedFile;
+        } catch (_error) {
+          console.warn(`Compression failed for ${field}, using original file`);
+          // Keep original file if compression fails
+        }
+      }
     }
 
-    const extension = file.name.split(".").pop() || "";
-    const baseName = file.name.substring(
-      0,
-      file.name.length - extension.length - 1
-    );
-    const truncatedBaseName = baseName.substring(
-      0,
-      maxLength - extension.length - 1
-    );
-
-    const newName = `${truncatedBaseName}.${extension}`;
-
-    // Create a new File object with the truncated name
-    return new File([file], newName, { type: file.type });
-  };
-
-  const compressFile = async (file: File): Promise<File> => {
-    // We only compress image files. Other files like PDFs are returned as is.
-    if (!file.type.startsWith("image/")) {
-      return file;
-    }
-
-    console.log(
-      `Original image size: ${(file.size / 1024 / 1024).toFixed(2)} MB`
-    );
-
-    const options = {
-      maxSizeMB: 1, // Max file size in MB
-      maxWidthOrHeight: 1920, // Max width or height
-      useWebWorker: true,
-      // Preserve original file name
-      initialQuality: 0.7,
-    };
-
-    try {
-      const compressedFile = await imageCompression(file, options);
-      console.log(
-        `Compressed image size: ${(compressedFile.size / 1024 / 1024).toFixed(
-          2
-        )} MB`
-      );
-      return new File([compressedFile], file.name, { type: file.type });
-    } catch (error) {
-      console.error("Error during image compression:", error);
-      return file; // Return original file if compression fails
-    }
+    return compressedFormData;
   };
 
   const handleSubmitApplication = async (e: FormEvent) => {
     e.preventDefault();
     setSubmitError("");
+    setUploadProgress(0);
 
     if (!validateForm()) {
       return;
@@ -371,24 +597,34 @@ function OpportunityDetailPage() {
     const isAuthenticated = !!token;
 
     try {
+      let finalFormData = formData;
+
+      // Always compress files for mobile, compress for desktop if unauthenticated
+      if (isMobile || !isAuthenticated) {
+        setCompressing(true);
+        finalFormData = await compressAllFiles();
+        setCompressing(false);
+      }
+
       if (isAuthenticated) {
         const authSubmitData = new FormData();
-        authSubmitData.append("resume", formData.resume || "");
-        authSubmitData.append("certification", formData.certification || "");
-        authSubmitData.append("cover_letter", formData.cover_letter || "");
+        authSubmitData.append("resume", finalFormData.resume || "");
+        authSubmitData.append(
+          "certification",
+          finalFormData.certification || ""
+        );
+        authSubmitData.append("cover_letter", finalFormData.cover_letter || "");
         authSubmitData.append(
           "available_start_date",
-          formData.available_start_date
+          finalFormData.available_start_date
         );
-        authSubmitData.append("qualification", formData.qualification);
+        authSubmitData.append("qualification", finalFormData.qualification);
 
         const response: AxiosResponse = await api.post(
           `applicant/application/auth/${campaignId}`,
           authSubmitData,
           {
-            headers: {
-              "Content-Type": "multipart/form-data",
-            },
+            headers: { "Content-Type": "multipart/form-data" },
           }
         );
 
@@ -397,35 +633,15 @@ function OpportunityDetailPage() {
           setTimeout(() => router.push("/dashboard"), 2000);
         }
       } else {
-        const unauthSubmitData = new FormData();
-
-        for (const key of Object.keys(formData)) {
-          const value = formData[key as keyof FormData];
-          if (value instanceof File) {
-            const compressedFile = await compressFile(value);
-            const truncatedFile = truncateFilename(compressedFile);
-            unauthSubmitData.append(key, truncatedFile);
-          } else if (value !== null) {
-            unauthSubmitData.append(key, value as string);
-          }
-        }
-
-        // Use a clean axios instance without interceptors for unauthenticated form submission
-        // to avoid issues with 401 redirects on mobile.
-        const unauthApi = (await import("axios")).default.create({
-          baseURL:
-            process.env.NEXT_PUBLIC_API_BASE_URL ||
-            "https://backend.dreamabroad.online/api/v2/",
-          timeout: 90000, // 90-second (1.5 minutes) timeout for file uploads
-        });
-
-        const response: AxiosResponse<ApiResponse> = await unauthApi.post(
+        // Mobile-optimized unauthenticated submission
+        const response = await MobileApiClient.submitApplication(
           `create/applicant/application/unauthenticated/${campaignId}`,
-          unauthSubmitData
+          finalFormData,
+          (progress) => setUploadProgress(progress)
         );
 
         if (response.status === 201) {
-          const responseData = response.data;
+          const responseData = response.data as ApiResponse;
           if (responseData.success) {
             sessionStorage.setItem(
               "login_message",
@@ -442,28 +658,60 @@ function OpportunityDetailPage() {
         }
       }
     } catch (error) {
-      console.error("Error submitting application:", error);
-      if (error instanceof AxiosError && error.response) {
-        const errorData = error.response.data;
-        if (errorData.errors) {
-          const firstError = Object.values(errorData.errors)[0];
-          setSubmitError(
-            Array.isArray(firstError) ? firstError[0] : String(firstError)
-          );
-        } else if (errorData.message) {
-          setSubmitError(errorData.message);
-        } else if (errorData.applicant && Array.isArray(errorData.applicant)) {
-          setSubmitError(errorData.applicant[0]);
+      console.error("Submission error:", error);
+
+      if (error instanceof AxiosError) {
+        if (error.response) {
+          // Server responded with error
+          const errorData = error.response.data as {
+            errors?: Record<string, string[] | string>;
+            message?: string;
+            applicant?: string[];
+          };
+          if (errorData.errors) {
+            const firstError = Object.values(errorData.errors)[0];
+            setSubmitError(
+              Array.isArray(firstError)
+                ? (firstError as string[])[0]
+                : String(firstError)
+            );
+          } else if (errorData.message) {
+            setSubmitError(errorData.message);
+          } else if (
+            errorData.applicant &&
+            Array.isArray(errorData.applicant)
+          ) {
+            setSubmitError(errorData.applicant[0]);
+          } else if (error.response.status === 413) {
+            setSubmitError(
+              "File size too large. Please try with smaller files."
+            );
+          } else {
+            setSubmitError(
+              `Server error (${error.response.status}). Please try again.`
+            );
+          }
+        } else if (error.request) {
+          // Network error
+          if (typeof navigator !== "undefined" && !navigator.onLine) {
+            setSubmitError("You are offline. Please check your connection.");
+          } else if (error.code === "ECONNABORTED") {
+            setSubmitError("Request timeout. Please try again.");
+          } else {
+            setSubmitError(
+              "Network error. Please check your connection and try again."
+            );
+          }
         } else {
-          setSubmitError("Failed to submit application. Please try again.");
+          setSubmitError("Application error. Please try again.");
         }
       } else {
-        setSubmitError(
-          "An unexpected error occurred. Please check your connection and try again."
-        );
+        setSubmitError("An unexpected error occurred. Please try again.");
       }
     } finally {
       setSubmitting(false);
+      setCompressing(false);
+      setUploadProgress(0);
     }
   };
 
@@ -506,7 +754,7 @@ function OpportunityDetailPage() {
         <div className="fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50">
           <div className="flex items-center">
             <i className="fas fa-check-circle mr-2"></i>
-            Application submitted successfully! Redirecting to your dashboard...
+            Application submitted successfully! Redirecting...
           </div>
         </div>
       )}
@@ -524,7 +772,8 @@ function OpportunityDetailPage() {
                     alt={opportunity.title}
                     width={800}
                     height={384}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full object-contain"
+                    priority={true}
                   />
                 ) : (
                   <div className="w-full h-full bg-gray-200 flex items-center justify-center">
@@ -556,9 +805,6 @@ function OpportunityDetailPage() {
                           height={80}
                           className="w-full h-full object-cover"
                         />
-                        {selectedImage === index && (
-                          <div className="absolute inset-0 bg-blue-600 bg-opacity-20"></div>
-                        )}
                       </button>
                     ))}
                   </div>
@@ -582,7 +828,7 @@ function OpportunityDetailPage() {
                     {opportunity.company}
                   </h3>
                   <p className="text-gray-600">
-                    {campaignData?.campaign?.category?.name || "Healthcare"}{" "}
+                    {campaignData?.campaign?.category?.name || "Healthcare"}
                   </p>
                 </div>
               </div>
@@ -662,13 +908,13 @@ function OpportunityDetailPage() {
 
                 <button
                   onClick={() => setShowApplicationForm(true)}
-                  disabled={submitting}
+                  disabled={submitting || compressing}
                   className="w-full bg-gradient-to-r from-blue-800 to-blue-600 text-white py-4 rounded-xl font-semibold shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {submitting ? (
+                  {submitting || compressing ? (
                     <div className="flex items-center justify-center">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mr-2"></div>
-                      Applying...
+                      {compressing ? "Processing..." : "Applying..."}
                     </div>
                   ) : (
                     "Apply Now"
@@ -695,11 +941,6 @@ function OpportunityDetailPage() {
                       <span className="text-gray-600 text-sm">{benefit}</span>
                     </div>
                   ))}
-                  {opportunity.benefits.length > 6 && (
-                    <button className="text-blue-600 text-sm font-semibold mt-2 hover:text-blue-800 transition-colors duration-300">
-                      +{opportunity.benefits.length - 6} more benefits
-                    </button>
-                  )}
                 </div>
               </div>
             </div>
@@ -718,6 +959,7 @@ function OpportunityDetailPage() {
                 <button
                   onClick={() => setShowApplicationForm(false)}
                   className="text-gray-400 hover:text-gray-600 transition-colors duration-300"
+                  disabled={submitting || compressing}
                 >
                   <i className="fas fa-times text-xl"></i>
                 </button>
@@ -732,6 +974,32 @@ function OpportunityDetailPage() {
                   {submitError}
                 </div>
               )}
+
+              {(submitting || compressing) && (
+                <div className="mt-4 bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-700 mr-2"></div>
+                      {compressing
+                        ? "Compressing files..."
+                        : "Submitting application..."}
+                    </div>
+                    {uploadProgress > 0 && (
+                      <span className="text-sm font-medium">
+                        {uploadProgress}%
+                      </span>
+                    )}
+                  </div>
+                  {uploadProgress > 0 && (
+                    <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${uploadProgress}%` }}
+                      ></div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <form onSubmit={handleSubmitApplication} className="p-6">
@@ -739,7 +1007,7 @@ function OpportunityDetailPage() {
                 <h3 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
                   Personal Information
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Full Name *
@@ -750,7 +1018,8 @@ function OpportunityDetailPage() {
                       value={formData.full_name}
                       onChange={handleInputChange}
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Enter your full name"
                     />
                   </div>
@@ -765,7 +1034,8 @@ function OpportunityDetailPage() {
                       value={formData.email}
                       onChange={handleInputChange}
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Enter your email"
                     />
                   </div>
@@ -780,21 +1050,23 @@ function OpportunityDetailPage() {
                       value={formData.phone_number}
                       onChange={handleInputChange}
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Enter your phone number"
                     />
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      WhatsApp Number (Optional)
+                      WhatsApp Number
                     </label>
                     <input
                       type="tel"
                       name="whats_app"
                       value={formData.whats_app}
                       onChange={handleInputChange}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Enter your WhatsApp number"
                     />
                   </div>
@@ -809,7 +1081,8 @@ function OpportunityDetailPage() {
                       value={formData.location}
                       onChange={handleInputChange}
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Enter your location"
                     />
                   </div>
@@ -824,7 +1097,8 @@ function OpportunityDetailPage() {
                       value={formData.passport_number}
                       onChange={handleInputChange}
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Enter passport number"
                     />
                   </div>
@@ -839,7 +1113,8 @@ function OpportunityDetailPage() {
                       value={formData.nationality}
                       onChange={handleInputChange}
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Enter your nationality"
                     />
                   </div>
@@ -854,7 +1129,8 @@ function OpportunityDetailPage() {
                       value={formData.id_card}
                       onChange={handleInputChange}
                       required
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Enter ID card number"
                     />
                   </div>
@@ -868,7 +1144,8 @@ function OpportunityDetailPage() {
                       name="date_of_birth"
                       value={formData.date_of_birth}
                       onChange={handleInputChange}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                     />
                   </div>
                 </div>
@@ -878,7 +1155,7 @@ function OpportunityDetailPage() {
                 <h3 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
                   Documents & Files
                 </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Resume/CV *
@@ -889,24 +1166,29 @@ function OpportunityDetailPage() {
                       onChange={(e) => handleFileUpload(e, "resume")}
                       required
                       accept=".pdf,.doc,.docx"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                     />
                     <p className="text-xs text-gray-500 mt-1">
-                      PDF, DOC, DOCX files only
+                      PDF, DOC, DOCX (Max {isMobile ? "3MB" : "5MB"})
                     </p>
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Certifications (Optional)
+                      Certifications
                     </label>
                     <input
                       type="file"
                       name="certification"
                       onChange={(e) => handleFileUpload(e, "certification")}
                       accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      PDF, DOC, DOCX, JPG, PNG
+                    </p>
                   </div>
 
                   <div>
@@ -919,8 +1201,12 @@ function OpportunityDetailPage() {
                       onChange={(e) => handleFileUpload(e, "card_image_front")}
                       required
                       accept=".jpg,.jpeg,.png"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      JPG, PNG (Max {isMobile ? "1MB" : "2MB"})
+                    </p>
                   </div>
 
                   <div>
@@ -933,20 +1219,39 @@ function OpportunityDetailPage() {
                       onChange={(e) => handleFileUpload(e, "card_image_back")}
                       required
                       accept=".jpg,.jpeg,.png"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                     />
+                    <p className="text-xs text-gray-500 mt-1">
+                      JPG, PNG (Max {isMobile ? "1MB" : "2MB"})
+                    </p>
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Profile Photo (Optional)
+                      Profile Photo
                     </label>
                     <input
                       type="file"
                       name="profile_photo"
                       onChange={(e) => handleFileUpload(e, "profile_photo")}
                       accept=".jpg,.jpeg,.png"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Cover Letter
+                    </label>
+                    <input
+                      type="file"
+                      name="cover_letter"
+                      onChange={(e) => handleFileUpload(e, "cover_letter")}
+                      accept=".pdf,.doc,.docx"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                     />
                   </div>
                 </div>
@@ -956,7 +1261,7 @@ function OpportunityDetailPage() {
                 <h3 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
                   Additional Information
                 </h3>
-                <div className="grid grid-cols-1 gap-6">
+                <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Bio
@@ -966,25 +1271,10 @@ function OpportunityDetailPage() {
                       value={formData.bio}
                       onChange={handleInputChange}
                       rows={3}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Brief summary about yourself..."
                     />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Cover Letter (Optional)
-                    </label>
-                    <input
-                      type="file"
-                      name="cover_letter"
-                      onChange={(e) => handleFileUpload(e, "cover_letter")}
-                      accept=".pdf,.doc,.docx"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      PDF, DOC, DOCX files only
-                    </p>
                   </div>
 
                   <div>
@@ -996,7 +1286,8 @@ function OpportunityDetailPage() {
                       value={formData.qualification}
                       onChange={handleInputChange}
                       rows={3}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="List your relevant qualifications..."
                     />
                   </div>
@@ -1010,12 +1301,13 @@ function OpportunityDetailPage() {
                       value={formData.education}
                       onChange={handleInputChange}
                       rows={3}
-                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                      disabled={submitting || compressing}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       placeholder="Your education background..."
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         LinkedIn Profile
@@ -1025,7 +1317,8 @@ function OpportunityDetailPage() {
                         name="linkedin_profile"
                         value={formData.linkedin_profile}
                         onChange={handleInputChange}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                        disabled={submitting || compressing}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                         placeholder="https://linkedin.com/in/yourprofile"
                       />
                     </div>
@@ -1039,7 +1332,8 @@ function OpportunityDetailPage() {
                         name="website_or_portfolio"
                         value={formData.website_or_portfolio}
                         onChange={handleInputChange}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                        disabled={submitting || compressing}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                         placeholder="https://yourportfolio.com"
                       />
                     </div>
@@ -1053,7 +1347,8 @@ function OpportunityDetailPage() {
                         name="languages_spoken"
                         value={formData.languages_spoken}
                         onChange={handleInputChange}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                        disabled={submitting || compressing}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                         placeholder="English, Spanish, French..."
                       />
                     </div>
@@ -1067,7 +1362,8 @@ function OpportunityDetailPage() {
                         name="available_start_date"
                         value={formData.available_start_date}
                         onChange={handleInputChange}
-                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
+                        disabled={submitting || compressing}
+                        className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300 disabled:opacity-50"
                       />
                     </div>
                   </div>
@@ -1078,20 +1374,20 @@ function OpportunityDetailPage() {
                 <button
                   type="button"
                   onClick={() => setShowApplicationForm(false)}
-                  className="flex-1 border-2 border-gray-300 text-gray-700 py-4 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-300"
-                  disabled={submitting}
+                  className="flex-1 border-2 border-gray-300 text-gray-700 py-4 rounded-xl font-semibold hover:bg-gray-50 transition-all duration-300 disabled:opacity-50"
+                  disabled={submitting || compressing}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={submitting}
+                  disabled={submitting || compressing}
                   className="flex-1 bg-gradient-to-r from-blue-800 to-blue-600 text-white py-4 rounded-xl font-semibold shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {submitting ? (
+                  {submitting || compressing ? (
                     <div className="flex items-center justify-center">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-white mr-2"></div>
-                      Submitting...
+                      {compressing ? "Processing..." : "Submitting..."}
                     </div>
                   ) : (
                     "Submit Application"
