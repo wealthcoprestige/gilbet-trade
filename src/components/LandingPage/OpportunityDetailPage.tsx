@@ -7,7 +7,6 @@ import Header from "./Header";
 import companyLogo from "../../../public/logo.png";
 import api from "../axios/axiosInsatance";
 
-// Define TypeScript interfaces
 interface CampaignData {
   campaign?: {
     id: number;
@@ -79,13 +78,17 @@ interface Opportunity {
   applicationProcess: string[];
 }
 
-// Helper function to safely extract data from API response
+interface ApiResponse {
+  success: boolean;
+  message: string;
+  application_id?: string;
+  applicant_id?: string;
+}
+
 const extractDataFromResponse = (response: unknown): CampaignData | null => {
-  // If response has data property (Axios structure)
   if (response && typeof response === "object" && "data" in response) {
     return response.data as CampaignData;
   }
-  // If response is the data directly
   if (response && typeof response === "object") {
     return response as CampaignData;
   }
@@ -103,9 +106,7 @@ function OpportunityDetailPage() {
   const [submitError, setSubmitError] = useState<string>("");
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
-  // Form data matching the Django Applicant and Application models
   const [formData, setFormData] = useState<FormData>({
-    // Applicant fields
     full_name: "",
     email: "",
     phone_number: "",
@@ -123,8 +124,6 @@ function OpportunityDetailPage() {
     website_or_portfolio: "",
     languages_spoken: "",
     education: "",
-
-    // Application fields
     resume: null,
     certification: null,
     cover_letter: null,
@@ -139,7 +138,6 @@ function OpportunityDetailPage() {
   useEffect(() => {
     const fetchData = async () => {
       if (!campaignId) {
-        console.error("No campaign ID provided");
         setLoading(false);
         return;
       }
@@ -147,8 +145,6 @@ function OpportunityDetailPage() {
       try {
         setLoading(true);
         const response = await api.get(`/compaign/details/${campaignId}`);
-
-        // Use helper function to safely extract data
         const responseData = extractDataFromResponse(response);
         setCampaignData(responseData);
       } catch (error) {
@@ -160,7 +156,6 @@ function OpportunityDetailPage() {
 
     fetchData();
 
-    // Check for authentication token
     const token =
       typeof window !== "undefined"
         ? localStorage.getItem("access_token")
@@ -168,14 +163,12 @@ function OpportunityDetailPage() {
     setIsAuthenticated(!!token);
   }, [campaignId]);
 
-  // Helper function to get full image URL
   const getImageUrl = (imagePath: string | undefined): string => {
     if (!imagePath) return "";
     if (imagePath.startsWith("http")) return imagePath;
-    return `http://127.0.0.1:8000${imagePath}`;
+    return `https://backend.dreamabroad.online/media/${imagePath}`;
   };
 
-  // Use actual data if available, otherwise use fallback
   const opportunity: Opportunity = campaignData
     ? {
         id: campaignData.campaign?.id || 0,
@@ -192,23 +185,16 @@ function OpportunityDetailPage() {
         deadline: "2024-12-31",
         company: campaignData.campaign?.title || "Company not specified",
         companyLogo: getImageUrl(campaignData.campaign?.image),
-
         images:
           campaignData.gallery?.map((item) => getImageUrl(item.image)) ||
           [getImageUrl(campaignData.campaign?.image)].filter(Boolean),
-
         description:
           campaignData.campaign?.description ||
           "Join our team for an exciting opportunity.",
-
         fullDescription:
           campaignData.compaign_benefits?.[0]?.full_description ||
           campaignData.campaign?.description ||
-          `
-      This position offers great opportunities for professional growth and development.
-      Join our dedicated team and make a difference in healthcare.
-    `,
-
+          "This position offers great opportunities for professional growth and development.",
         requirements: Array.isArray(
           campaignData.compaign_benefits?.[0]?.requirements
         )
@@ -218,7 +204,6 @@ function OpportunityDetailPage() {
               "Strong communication skills",
               "Team player mentality",
             ],
-
         responsibilities: Array.isArray(
           campaignData.compaign_benefits?.[0]?.responsibilities
         )
@@ -228,7 +213,6 @@ function OpportunityDetailPage() {
               "Collaborate with team members",
               "Maintain professional standards",
             ],
-
         benefits: Array.isArray(campaignData.compaign_benefits?.[0]?.benefit)
           ? campaignData.compaign_benefits[0].benefit
           : [
@@ -236,7 +220,6 @@ function OpportunityDetailPage() {
               "Professional development",
               "Great work environment",
             ],
-
         applicationProcess: [
           "Submit online application",
           "Initial screening",
@@ -245,7 +228,6 @@ function OpportunityDetailPage() {
         ],
       }
     : {
-        // Fallback data while loading or if no data
         id: 7,
         title: "Loading...",
         type: "Loading...",
@@ -275,15 +257,11 @@ function OpportunityDetailPage() {
     e: ChangeEvent<HTMLInputElement>,
     fieldName: keyof FormData
   ) => {
-    // Ensure files exist and a file was selected
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       if (file) {
         setFormData((prev) => ({ ...prev, [fieldName]: file }));
       }
-    } else {
-      // Optional: handle case where user cancels file selection
-      console.log("No file selected or selection was cancelled.");
     }
   };
 
@@ -297,16 +275,17 @@ function OpportunityDetailPage() {
       "nationality",
       "id_card",
       "resume",
+      "card_image_front",
+      "card_image_back",
     ];
 
     for (const field of requiredFields) {
       if (!formData[field]) {
-        setSubmitError(`Please fill in the ${field.replace("_", " ")} field`);
+        setSubmitError(`Please fill in the ${field.replace(/_/g, " ")} field`);
         return false;
       }
     }
 
-    // Validate file types
     const resumeFile = formData.resume;
     if (
       resumeFile &&
@@ -371,7 +350,6 @@ function OpportunityDetailPage() {
 
     setSubmitting(true);
 
-    // Check for authentication token
     const token =
       typeof window !== "undefined"
         ? localStorage.getItem("access_token")
@@ -380,9 +358,7 @@ function OpportunityDetailPage() {
 
     try {
       if (isAuthenticated) {
-        // Authenticated user flow
         const authSubmitData = new FormData();
-        // Authenticated users might only need to submit application-specific fields
         authSubmitData.append("resume", formData.resume || "");
         authSubmitData.append("certification", formData.certification || "");
         authSubmitData.append("cover_letter", formData.cover_letter || "");
@@ -391,6 +367,7 @@ function OpportunityDetailPage() {
           formData.available_start_date
         );
         authSubmitData.append("qualification", formData.qualification);
+
         const response: AxiosResponse = await api.post(
           `applicant/application/auth/${campaignId}`,
           authSubmitData,
@@ -406,7 +383,6 @@ function OpportunityDetailPage() {
           setTimeout(() => router.push("/dashboard"), 2000);
         }
       } else {
-        // Unauthenticated user flow
         const unauthSubmitData = new FormData();
 
         for (const key in formData) {
@@ -418,10 +394,7 @@ function OpportunityDetailPage() {
           }
         }
 
-        const response = await api.postWithResponse<{
-          success: boolean;
-          message: string;
-        }>(
+        const response: AxiosResponse<ApiResponse> = await api.postWithResponse(
           `create/applicant/application/unauthenticated/${campaignId}`,
           unauthSubmitData,
           {
@@ -431,30 +404,40 @@ function OpportunityDetailPage() {
           }
         );
 
-        if (response.status === 201 && response.data.success) {
-          sessionStorage.setItem(
-            "login_message",
-            "Application successful! Please check your email for your default password and log in to continue."
-          );
-          router.push("/accounts/login");
+        if (response.status === 201) {
+          const responseData = response.data;
+          if (responseData.success) {
+            sessionStorage.setItem(
+              "login_message",
+              "Application successful! Please check your email for your default password and log in to continue."
+            );
+            router.push("/accounts/login");
+          } else {
+            setSubmitError(
+              responseData.message || "Application submission failed"
+            );
+          }
+        } else {
+          setSubmitError("Failed to submit application. Please try again.");
         }
       }
     } catch (error) {
       console.error("Error submitting application:", error);
       if (error instanceof AxiosError && error.response) {
         const errorData = error.response.data;
-        // Handle specific error for already applied
-        if (errorData.applicant && Array.isArray(errorData.applicant)) {
+        if (errorData.errors) {
+          const firstError = Object.values(errorData.errors)[0];
+          setSubmitError(
+            Array.isArray(firstError) ? firstError[0] : String(firstError)
+          );
+        } else if (errorData.message) {
+          setSubmitError(errorData.message);
+        } else if (errorData.applicant && Array.isArray(errorData.applicant)) {
           setSubmitError(errorData.applicant[0]);
         } else {
-          setSubmitError(
-            errorData.message ||
-              "Failed to submit application. Please try again."
-          );
+          setSubmitError("Failed to submit application. Please try again.");
         }
       } else {
-        // Log the full error for better client-side debugging
-        console.error("A non-Axios error occurred:", error);
         setSubmitError(
           "An unexpected error occurred. Please check your connection and try again."
         );
@@ -499,7 +482,6 @@ function OpportunityDetailPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Success Notification for Authenticated User */}
       {submitSuccess && (
         <div className="fixed top-4 right-4 bg-green-500 text-white px-6 py-3 rounded-lg shadow-lg z-50">
           <div className="flex items-center">
@@ -509,15 +491,11 @@ function OpportunityDetailPage() {
         </div>
       )}
 
-      {/* Header */}
       <Header />
 
-      {/* Main Content */}
       <div className="container mx-auto px-4 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Left Column - Images and Basic Info */}
           <div className="lg:col-span-2">
-            {/* Main Image Gallery */}
             <div className="bg-white rounded-2xl shadow-lg overflow-hidden mb-6">
               <div className="relative h-96 overflow-hidden">
                 {opportunity.images.length > 0 ? (
@@ -527,6 +505,7 @@ function OpportunityDetailPage() {
                     width={800}
                     height={384}
                     className="w-full h-full object-cover"
+                    style={{ width: "auto", height: "auto" }}
                   />
                 ) : (
                   <div className="w-full h-full bg-gray-200 flex items-center justify-center">
@@ -538,7 +517,6 @@ function OpportunityDetailPage() {
                 </div>
               </div>
 
-              {/* Thumbnail Gallery */}
               {opportunity.images.length > 1 && (
                 <div className="p-4 bg-gray-50">
                   <div className="grid grid-cols-4 gap-2">
@@ -558,6 +536,7 @@ function OpportunityDetailPage() {
                           width={200}
                           height={80}
                           className="w-full h-full object-cover"
+                          style={{ width: "auto", height: "auto" }}
                         />
                         {selectedImage === index && (
                           <div className="absolute inset-0 bg-blue-600 bg-opacity-20"></div>
@@ -569,7 +548,6 @@ function OpportunityDetailPage() {
               )}
             </div>
 
-            {/* Company Info */}
             <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
               <div className="flex items-center space-x-4">
                 {opportunity.companyLogo && (
@@ -592,7 +570,6 @@ function OpportunityDetailPage() {
               </div>
             </div>
 
-            {/* Detailed Description */}
             <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
               <h2 className="text-2xl font-bold text-gray-800 mb-4">
                 Position Overview
@@ -607,7 +584,6 @@ function OpportunityDetailPage() {
               </div>
             </div>
 
-            {/* Requirements */}
             <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
               <h2 className="text-2xl font-bold text-gray-800 mb-4">
                 Requirements & Qualifications
@@ -622,7 +598,6 @@ function OpportunityDetailPage() {
               </ul>
             </div>
 
-            {/* Responsibilities */}
             <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
               <h2 className="text-2xl font-bold text-gray-800 mb-4">
                 Key Responsibilities
@@ -638,10 +613,8 @@ function OpportunityDetailPage() {
             </div>
           </div>
 
-          {/* Right Column - Application Card */}
           <div className="lg:col-span-1">
             <div className="sticky top-8">
-              {/* Application Card */}
               <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
                 <h3 className="text-xl font-bold text-gray-800 mb-4">
                   Apply for this Position
@@ -697,7 +670,6 @@ function OpportunityDetailPage() {
                 </button>
               </div>
 
-              {/* Benefits Card */}
               <div className="bg-white rounded-2xl shadow-lg p-6">
                 <h3 className="text-xl font-bold text-gray-800 mb-4">
                   Benefits & Perks
@@ -721,7 +693,6 @@ function OpportunityDetailPage() {
         </div>
       </div>
 
-      {/* Application Form Modal */}
       {showApplicationForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center p-4 z-50 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full my-8">
@@ -750,7 +721,6 @@ function OpportunityDetailPage() {
             </div>
 
             <form onSubmit={handleSubmitApplication} className="p-6">
-              {/* Personal Information Section */}
               <div className="mb-8">
                 <h3 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
                   Personal Information
@@ -890,7 +860,6 @@ function OpportunityDetailPage() {
                 </div>
               </div>
 
-              {/* Document Uploads Section */}
               <div className="mb-8">
                 <h3 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
                   Documents & Files
@@ -969,7 +938,6 @@ function OpportunityDetailPage() {
                 </div>
               </div>
 
-              {/* Additional Information Section */}
               <div className="mb-8">
                 <h3 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
                   Additional Information
@@ -1092,7 +1060,6 @@ function OpportunityDetailPage() {
                 </div>
               </div>
 
-              {/* Submit Buttons */}
               <div className="flex space-x-4 pt-4 border-t border-gray-200">
                 <button
                   type="button"
