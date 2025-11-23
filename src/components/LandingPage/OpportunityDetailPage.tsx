@@ -254,7 +254,7 @@ class MobileApiClient {
       baseURL:
         process.env.NEXT_PUBLIC_API_BASE_URL ||
         "https://backend.dreamabroad.online/api/v2/",
-      timeout: 45000, // 45 seconds for mobile
+      timeout: 120000, // 2 minutes, more accommodating for mobile compression + upload
       maxContentLength: 100 * 1024 * 1024,
       maxBodyLength: 100 * 1024 * 1024,
       headers: {
