@@ -1,6 +1,6 @@
 "use client";
 import React, { useEffect, useState, ChangeEvent, FormEvent } from "react";
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AxiosError, AxiosResponse } from "axios";
 import Image from "next/image";
 import Header from "./Header";
@@ -104,7 +104,6 @@ function OpportunityDetailPage() {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitSuccess, setSubmitSuccess] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string>("");
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
   const [formData, setFormData] = useState<FormData>({
     full_name: "",
@@ -155,12 +154,6 @@ function OpportunityDetailPage() {
     };
 
     fetchData();
-
-    const token =
-      typeof window !== "undefined"
-        ? localStorage.getItem("access_token")
-        : null;
-    setIsAuthenticated(!!token);
   }, [campaignId]);
 
   const getImageUrl = (imagePath: string | undefined): string => {
@@ -363,13 +356,10 @@ function OpportunityDetailPage() {
 
         // Use a clean axios instance without interceptors for unauthenticated form submission
         // to avoid issues with 401 redirects on mobile.
-        const unauthApi = require("axios").create({
+        const unauthApi = (await import("axios")).default.create({
           baseURL:
             process.env.NEXT_PUBLIC_API_BASE_URL ||
             "https://backend.dreamabroad.online/api/v2/",
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
         });
 
         const response: AxiosResponse<ApiResponse> = await unauthApi.post(
