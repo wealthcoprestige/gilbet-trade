@@ -772,7 +772,7 @@ function OpportunityDetailPage() {
                     alt={opportunity.title}
                     width={800}
                     height={384}
-                    className="w-full h-full object-contain"
+                    className="w-full h-full object-cover"
                     priority={true}
                   />
                 ) : (
@@ -1403,4 +1403,3 @@ function OpportunityDetailPage() {
 }
 
 export default OpportunityDetailPage;
-
