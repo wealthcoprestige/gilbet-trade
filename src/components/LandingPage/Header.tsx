@@ -141,6 +141,15 @@ function Header() {
 
           {/* Desktop Auth Buttons - Right Side */}
           <div className="hidden md:flex items-center space-x-4 ml-auto">
+            <a
+              href="https://wa.link/rpyupe"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Contact us on WhatsApp"
+              className="text-gray-600 hover:text-green-500 transition-colors duration-300"
+            >
+              <i className="fab fa-whatsapp text-3xl"></i>
+            </a>
             {isAuthenticated && applicant ? (
               <div className="relative">
                 <button
@@ -238,6 +247,16 @@ function Header() {
 
                 {/* Action Buttons */}
                 <div className="space-y-3 border-t pt-6">
+                  <a
+                    href="https://wa.link/rpyupe"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-green-500 text-white py-4 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-300 flex items-center justify-center"
+                  >
+                    <i className="fab fa-whatsapp mr-2"></i>
+                    Chat on WhatsApp
+                  </a>
+
                   <button
                     onClick={() => handleNavigation("/book-interview")}
                     className="w-full bg-gradient-to-r from-blue-800 to-blue-600 text-white py-4 rounded-xl font-semibold shadow-lg hover:shadow-xl transition-all duration-300 flex items-center justify-center"

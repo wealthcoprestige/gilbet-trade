@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import Head from "next/head";
 import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AxiosError } from "axios";
@@ -332,6 +333,12 @@ function ApplicantDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <Head>
+        <link
+          rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css"
+        />
+      </Head>
       {/* Use the reusable Header component */}
       <Header />
 
