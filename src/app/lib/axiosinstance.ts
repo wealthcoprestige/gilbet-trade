@@ -127,9 +127,12 @@ class ApiService {
 const authBaseURL = process.env.NEXT_PUBLIC_AUTH_BASE_URL || "http://127.0.0.1:7000/";
 // For other API endpoints
 const apiBaseURL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:7000/api/v1/";
+// For trade API endpoints
+const tradeApiBaseURL = process.env.NEXT_PUBLIC_TRADE_API_BASE_URL || "http://127.0.0.1:7000/api/v1/trade/";
 
 // Create instances
 export const authApi = new ApiService(authBaseURL); // For auth endpoints (starting from root)
 export const api = new ApiService(apiBaseURL); // For other endpoints
+export const tradeApi = new ApiService(tradeApiBaseURL); // For trade endpoints
 
 export default api;
