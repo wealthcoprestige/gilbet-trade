@@ -167,6 +167,10 @@ export default function Dashboard() {
         setShowWithdraw(false);
         setShowInvest(false);
       }
+      if (nextView === "investments") {
+        // This will be handled by the main view to show the active investments sidebar
+        resetToTrading();
+      }
       // You can add more views here later, like 'withdrawals'
 
       // Clear the item so it doesn't trigger on subsequent reloads
@@ -591,9 +595,8 @@ export default function Dashboard() {
 
         playSound();
 
-        // Refresh customer data to update investments
-        const customerResponse = await tradeApi.get("customer/account/");
-        setCustomerData(customerResponse);
+        sessionStorage.setItem("nextView", "investments");
+        window.location.reload();
       }
     } catch (err) {
       const errorMessage =
